@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ADMINS ────────────────────────────────────────────────────────────────
+model Admin {
+  id            BigInt       @id @default(autoincrement())
+  name          String       @db.VarChar(100)
+  email         String       @unique @db.VarChar(255)
+  password_hash String       @db.VarChar(255)
+  created_at    DateTime     @default(now())
+
+  restaurant    Restaurant?
+  refresh_tokens RefreshToken[]
+
+  @@map("admins")
+}
+
+// ─── CUSTOMERS ─────────────────────────────────────────────────────────────
+model Customer {
+  id            BigInt        @id @default(autoincrement())
+  name          String        @db.VarChar(100)
+  email         String        @unique @db.VarChar(255)
+  password_hash String        @db.VarChar(255)
+  phone_number  String        @db.VarChar(20)
+  created_at    DateTime      @default(now())
+
+  reservations  Reservation[]
+  refresh_tokens RefreshToken[]
+
+  @@map("customers")
+}
+
+// ─── RESTAURANTS ───────────────────────────────────────────────────────────
+model Restaurant {
+  id         BigInt   @id @default(autoincrement())
+  admin_id   BigInt   @unique
+  name       String   @db.VarChar(100)
+  address    String   @db.VarChar(255)
+  grid_rows  Int
+  grid_cols  Int
+  created_at DateTime @default(now())
+
+  admin        Admin         @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  tables       Table[]
+  reservations Reservation[]
+
+  @@map("restaurants")
+}
+
+// ─── TABLES ────────────────────────────────────────────────────────────────
+model Table {
+  id            BigInt   @id @default(autoincrement())
+  restaurant_id BigInt
+  label         String   @db.VarChar(50)
+  capacity      Int      // 2, 4, or 6 only — enforced in service layer
+  grid_row      Int
+  grid_col      Int
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+
+  restaurant         Restaurant          @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  reservation_tables ReservationTable[]
+
+  @@unique([restaurant_id, grid_row, grid_col], name: "unique_cell")
+  @@unique([restaurant_id, label], name: "unique_label")
+  @@map("tables")
+}
+
+// ─── RESERVATIONS ──────────────────────────────────────────────────────────
+model Reservation {
+  id               BigInt            @id @default(autoincrement())
+  customer_id      BigInt
+  restaurant_id    BigInt
+  reservation_date DateTime          @db.Date
+  start_time       String            @db.VarChar(5)  // "19:00"
+  end_time         String            @db.VarChar(5)  // "21:00" — always start + 2h
+  guest_count      Int
+  status           ReservationStatus @default(PENDING)
+  special_requests String?           @db.Text
+  created_at       DateTime          @default(now())
+
+  customer           Customer          @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  restaurant         Restaurant        @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  reservation_tables ReservationTable[]
+
+  @@index([restaurant_id, reservation_date, status])
+  @@index([customer_id, status])
+  @@map("reservations")
+}
+
+// ─── RESERVATION_TABLES (Junction) ────────────────────────────────────────
+// One reservation can use 1 or 2 tables (for large groups)
+model ReservationTable {
+  id             BigInt @id @default(autoincrement())
+  reservation_id BigInt
+  table_id       BigInt
+
+  reservation Reservation @relation(fields: [reservation_id], references: [id], onDelete: Cascade)
+  table       Table       @relation(fields: [table_id], references: [id], onDelete: Cascade)
+
+  @@unique([reservation_id, table_id])
+  @@map("reservation_tables")
+}
+
+// ─── REFRESH_TOKENS ────────────────────────────────────────────────────────
+// Two separate nullable FK columns instead of one polymorphic owner_id.
+// Exactly one of admin_id / customer_id will be set per row.
+model RefreshToken {
+  id          BigInt         @id @default(autoincrement())
+  token_hash  String         @unique @db.VarChar(64)
+  owner_type  TokenOwnerType
+  expires_at  DateTime
+  created_at  DateTime       @default(now())
+
+  admin_id    BigInt?
+  customer_id BigInt?
+
+  admin    Admin?    @relation(fields: [admin_id],    references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ─── ENUMS ─────────────────────────────────────────────────────────────────
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum TokenOwnerType {
+  CUSTOMER
+  ADMIN
+}
